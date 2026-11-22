@@ -6,98 +6,120 @@ namespace MiniCurl.Parsing
 {
     public class URLParser
     {
-
-        //https://www.example.com:8080/products?id=10#reviews
+        // Example: https://www.example.com:8080/products?id=10#reviews
         public ParsedURL? ParseURL(string url)
         {
-            if (string.IsNullOrEmpty(url))
+            if (string.IsNullOrWhiteSpace(url))
             {
-                Console.WriteLine("[URLParser: ParseURL] URL can't be null or empty");
+                Console.WriteLine("[URLParser: ParseURL] URL cannot be null or empty");
                 return null;
             }
 
             url = url.Trim();
 
-            int left, right = 0;
-            string? protocol = null;
-
-            //Extract the protocol
-            right = url.IndexOf(":");
-            if (right == -1)
+            // 1. If scheme is omitted (e.g. "google.com" or "example.com/api"), default to https://
+            if (!url.Contains("://"))
             {
-                Console.WriteLine("[URLParser: ParseURL] counldn't find protocol (Http/Https)");
+                Console.WriteLine("[URLParser: ParseURL] Protocol omitted -> defaulting scheme to https://");
+                url = "https://" + url;
+            }
+
+            // 2. Extract the protocol
+            int colonIndex = url.IndexOf(":");
+            if (colonIndex == -1)
+            {
+                Console.WriteLine("[URLParser: ParseURL] Invalid URL format (missing colon)");
                 return null;
             }
 
-            protocol = url.Substring(0, right);
-
-            protocol = protocol.ToLower();
-
+            string protocol = url.Substring(0, colonIndex).ToLower();
             if (protocol != "http" && protocol != "https")
             {
-
-                Console.WriteLine("[URLParser: ParseURL] invaild protocol (only Http/Https)");
+                Console.WriteLine($"[URLParser: ParseURL] Invalid protocol '{protocol}' (only http / https supported)");
                 return null;
             }
 
-            Console.WriteLine($"[URLParser: ParseURL] protocol: {protocol}");
+            Console.WriteLine($"[URLParser: ParseURL] Protocol: {protocol}");
 
-            //Extract host
-            left = right + 3; //skip ://
-            right = url.IndexOf("/", left);
-
-            string? host = url.Substring(left, right - left);
-
-            if (host == null)
+            // 3. Locate where host begins (after "://")
+            int hostStart = colonIndex + 3; // skip "://"
+            if (hostStart >= url.Length)
             {
-                Console.WriteLine("[URLParser: ParseURL] invaild host");
+                Console.WriteLine("[URLParser: ParseURL] Invalid URL (no host specified)");
                 return null;
             }
 
-            Console.WriteLine($"[URLParser: ParseURL] host: {host}");
+            // Find where host ends (first occurrence of '/', '?', or '#')
+            int slashIndex = url.IndexOf("/", hostStart);
+            int questionIndex = url.IndexOf("?", hostStart);
+            int hashIndex = url.IndexOf("#", hostStart);
 
-            //parse the host
-            int colonIndex = host.IndexOf(":");
+            int hostEnd = url.Length;
+            if (slashIndex != -1) hostEnd = Math.Min(hostEnd, slashIndex);
+            if (questionIndex != -1) hostEnd = Math.Min(hostEnd, questionIndex);
+            if (hashIndex != -1) hostEnd = Math.Min(hostEnd, hashIndex);
+
+            string host = url.Substring(hostStart, hostEnd - hostStart);
+            if (string.IsNullOrWhiteSpace(host))
+            {
+                Console.WriteLine("[URLParser: ParseURL] Invalid host (empty)");
+                return null;
+            }
+
+            Console.WriteLine($"[URLParser: ParseURL] Host: {host}");
+
+            // 4. Parse host into HostName and Port
+            int hostColonIndex = host.IndexOf(":");
+            string hostName;
             int port;
-            string? hostName = null;
 
-           int.TryParse((host.Substring(colonIndex + 1)), out port);
-
-            //if port wasn't specified, falling back to defualt port
-            if(port == 0)
+            if (hostColonIndex != -1)
             {
+                hostName = host.Substring(0, hostColonIndex);
+                string portStr = host.Substring(hostColonIndex + 1);
+
+                if (!int.TryParse(portStr, out port) || port <= 0 || port > 65535)
+                {
+                    Console.WriteLine($"[URLParser: ParseURL] Invalid port number: '{portStr}'");
+                    return null;
+                }
+            }
+            else
+            {
+                hostName = host;
                 port = protocol == "https" ? 443 : 80;
-            }    
+            }
 
-           Console.WriteLine($"[URLParser: ParseURL] port: {port}");
+            Console.WriteLine($"[URLParser: ParseURL] HostName: {hostName}");
+            Console.WriteLine($"[URLParser: ParseURL] Port: {port}");
 
-            hostName = host.Substring(0, colonIndex);
+            // 5. Extract PathName, SearchQuery, and ignore Fragment (#)
+            string remaining = url.Substring(hostEnd);
 
-            Console.WriteLine($"[URLParser: ParseURL] host name: {hostName}");
+            // Strip fragment (#) because fragments are client-only and never sent to servers
+            int remainingHash = remaining.IndexOf("#");
+            if (remainingHash != -1)
+            {
+                remaining = remaining.Substring(0, remainingHash);
+            }
 
-            //Extract PathName and SearchQuery
-            string? pathName = null;
+            string pathName = "/";
             string? searchQuery = null;
 
-            if (right != -1)
+            int remainingQuestion = remaining.IndexOf("?");
+            if (remainingQuestion != -1)
             {
-                left = right;
-                right = url.IndexOf("?", left);
-
-                if (right == -1)
-                {
-                    pathName = url.Substring(left);
-                }
-                else
-                {
-                    pathName = url.Substring(left, right - left);
-                    searchQuery = url.Substring(right + 1);
-                }
+                string rawPath = remaining.Substring(0, remainingQuestion);
+                pathName = string.IsNullOrEmpty(rawPath) ? "/" : rawPath;
+                searchQuery = remaining.Substring(remainingQuestion + 1);
+            }
+            else
+            {
+                pathName = string.IsNullOrEmpty(remaining) ? "/" : remaining;
             }
 
-            Console.WriteLine($"[URLParser: ParseURL] path name: {pathName}");
-            Console.WriteLine($"[URLParser: ParseURL] search query: {searchQuery}");
-
+            Console.WriteLine($"[URLParser: ParseURL] PathName: {pathName}");
+            Console.WriteLine($"[URLParser: ParseURL] SearchQuery: {searchQuery}");
 
             return new ParsedURL
             {
