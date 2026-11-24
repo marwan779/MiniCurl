@@ -2,6 +2,8 @@
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using System.Transactions;
 
@@ -107,8 +109,8 @@ namespace MiniCurl.DNS
             return result;
         }
 
-        //4. build the main orchestrator 
-        public byte[] BuildQueryPacket(string domain, ushort questionType = 0x0001, ushort questionClass = 0x0001)
+        //4. Build the main orchestrator 
+        public byte[] BuildQueryPacket(string domain, out ushort transactionId, ushort questionType = 0x0001, ushort questionClass = 0x0001)
         {
             Console.WriteLine($"[DnsProvider: BuildQueryPacket] Building DNS query packet for '{domain}'");
             //Track the length
@@ -117,10 +119,7 @@ namespace MiniCurl.DNS
             //Encode the domain.
             var encodedDomain = EncodeDomainName(domain);
 
-            totalLegnth += encodedDomain.Length;
-
             //Build the headers.
-            ushort transactionId;
             var headers = BuildHeader(out transactionId);
 
             totalLegnth += headers.Length;
@@ -140,6 +139,181 @@ namespace MiniCurl.DNS
 
             return bucket;
 
+        }
+
+        //5. Build the bucket sender
+        private (DnsHeader Header, byte[] RawResponse) SendQuery(byte[] queryPacket, ushort transactionId, string dnsServer = "8.8.8.8", int port = 53)
+        {
+            if (queryPacket == null || queryPacket.Length == 0)
+                throw new ArgumentNullException("[DnsProvider: ConvertRawDomain] Domain can't be null");
+
+            //Setup the response buffer with max size of 512
+            byte[] responseBuffer = new byte[512];
+
+            //Setup the UDP socket
+            using Socket socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            socket.ReceiveTimeout = 3000;
+            socket.SendTimeout = 3000;
+
+            //Setup the endpoint
+            var endPoint = new IPEndPoint(IPAddress.Parse(dnsServer), port);
+
+            //Send the query and receive the response 
+            socket.SendTo(queryPacket, endPoint);
+
+            int bytesReceived = socket.Receive(responseBuffer);
+
+            byte[] actualResponse = responseBuffer[..bytesReceived];
+
+
+            // Validate the response length
+            var header = ParseDnsHeader(actualResponse);
+
+            if (header.TransactionId != transactionId)
+                throw new InvalidDataException($"Transaction ID mismatch: sent 0x{transactionId:X4}, got 0x{header.TransactionId:X4}");
+
+            if (!header.IsResponse)
+                throw new InvalidDataException("Received a query packet instead of a response.");
+
+            if (header.ResponseCode != 0)
+                throw new Exception($"DNS server replied with error code: {header.ResponseCode} (e.g. 3 = NXDOMAIN)");
+
+            return (header, actualResponse);
+        }
+
+
+        private DnsHeader ParseDnsHeader(byte[] response)
+        {
+            if (response == null)
+                throw new ArgumentNullException(nameof(response));
+
+            if (response.Length < 12)
+                throw new InvalidDataException("DNS response header is incomplete.");
+
+            return new DnsHeader
+            {
+                TransactionId = BinaryPrimitives.ReadUInt16BigEndian(response.AsSpan(0, 2)),
+                Flags = BinaryPrimitives.ReadUInt16BigEndian(response.AsSpan(2, 2)),
+
+                QuestionCount = BinaryPrimitives.ReadUInt16BigEndian(response.AsSpan(4, 2)),
+                AnswerCount = BinaryPrimitives.ReadUInt16BigEndian(response.AsSpan(6, 2)),
+                AuthorityCount = BinaryPrimitives.ReadUInt16BigEndian(response.AsSpan(8, 2)),
+                AdditionalCount = BinaryPrimitives.ReadUInt16BigEndian(response.AsSpan(10, 2))
+            };
+        }
+
+        //6. Helper to parse Answer records from the DNS response
+        private List<IPAddress> ParseAnswers(byte[] response, DnsHeader header)
+        {
+            Console.WriteLine($"[DnsProvider: ParseAnswers] Parsing {header.AnswerCount} answer records from response ({response.Length} bytes)");
+            var ipAddresses = new List<IPAddress>();
+
+            if (header.AnswerCount == 0)
+            {
+                Console.WriteLine("[DnsProvider: ParseAnswers] No answers returned in DNS response");
+                return ipAddresses;
+            }
+
+            // Step 1: Start immediately after the 12-byte header
+            int offset = 12;
+
+            // Step 2: Skip the Question section (QNAME + QTYPE[2] + QCLASS[2])
+            while (offset < response.Length && response[offset] != 0x00)
+            {
+                // If it's a pointer (0xC0), it's 2 bytes
+                if ((response[offset] & 0xC0) == 0xC0)
+                {
+                    offset += 2;
+                    break;
+                }
+
+                int labelLength = response[offset];
+                offset += 1 + labelLength;
+            }
+
+            if (offset < response.Length && response[offset] == 0x00)
+            {
+                offset++; // Skip the 0x00 null byte at the end of the domain name
+            }
+
+            offset += 4; // Skip QTYPE (2 bytes) + QCLASS (2 bytes)
+
+            // Step 3: Parse each Answer Resource Record
+            for (int i = 0; i < header.AnswerCount; i++)
+            {
+                if (offset >= response.Length)
+                    break;
+
+                // 3a. Read NAME: If it starts with 11xxxxxx (0xC0), it's a 2-byte compression pointer
+                if ((response[offset] & 0xC0) == 0xC0)
+                {
+                    offset += 2;
+                }
+                else
+                {
+                    // Literal domain name labels
+                    while (offset < response.Length && response[offset] != 0x00)
+                    {
+                        int len = response[offset];
+                        offset += 1 + len;
+                    }
+                    if (offset < response.Length) offset++; // skip 0x00
+                }
+
+                if (offset + 10 > response.Length)
+                    break;
+
+                // 3b. Read TYPE (2 bytes), CLASS (2 bytes), TTL (4 bytes), RDLENGTH (2 bytes)
+                ushort type = BinaryPrimitives.ReadUInt16BigEndian(response.AsSpan(offset, 2));
+                offset += 2;
+
+                ushort @class = BinaryPrimitives.ReadUInt16BigEndian(response.AsSpan(offset, 2));
+                offset += 2;
+
+                uint ttl = BinaryPrimitives.ReadUInt32BigEndian(response.AsSpan(offset, 4));
+                offset += 4;
+
+                ushort rdLength = BinaryPrimitives.ReadUInt16BigEndian(response.AsSpan(offset, 2));
+                offset += 2;
+
+                // 3c. If Type == 1 (A record / IPv4) and RDLENGTH == 4, extract the IP!
+                if (type == 1 && rdLength == 4 && offset + 4 <= response.Length)
+                {
+                    byte[] ipBytes = response.AsSpan(offset, 4).ToArray();
+                    var ip = new IPAddress(ipBytes);
+                    ipAddresses.Add(ip);
+                    Console.WriteLine($"[DnsProvider: ParseAnswers] Found IPv4 A Record: {ip} (TTL: {ttl}s)");
+                }
+                else
+                {
+                    Console.WriteLine($"[DnsProvider: ParseAnswers] Skipping non-A record (Type: {type}, RDLENGTH: {rdLength})");
+                }
+
+                offset += rdLength;
+            }
+
+            return ipAddresses;
+        }
+
+        // 7. Public orchestrator: Resolves a domain name to IP addresses
+        public List<IPAddress> Resolve(string domain, string dnsServer = "8.8.8.8", int port = 53)
+        {
+            Console.WriteLine($"\n[DnsProvider: Resolve] Resolving domain '{domain}' using DNS server '{dnsServer}'");
+
+            // 1. Build wire-format query packet
+            byte[] queryPacket = BuildQueryPacket(domain, out ushort transactionId);
+
+            // 2. Send over UDP and receive validated response
+            var (header, rawResponse) = SendQuery(queryPacket, transactionId, dnsServer, port);
+
+            // 3. Parse and extract IP addresses from answer section
+            var ips = ParseAnswers(rawResponse, header);
+
+            if (ips.Count == 0)
+                throw new Exception($"[DnsProvider: Resolve] Could not resolve an IPv4 address for '{domain}'");
+
+            Console.WriteLine($"[DnsProvider: Resolve] Successfully resolved '{domain}' -> {string.Join(", ", ips)}");
+            return ips;
         }
     }
 }

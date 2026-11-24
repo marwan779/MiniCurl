@@ -11,22 +11,18 @@ class Program
 
         HstsCahceProvider hstsCahceProvider = new HstsCahceProvider();
 
-        //var item = new HstsCacheItem(
-        //    "github.com",
-        //    TimeSpan.FromSeconds(31536000),
-        //    includeSubDomains: true
-        //);
+        Console.WriteLine("\n==============================");
+        Console.WriteLine("    Testing DNS Resolution    ");
+        Console.WriteLine("==============================");
 
-        //var res = hstsCahceProvider.Set( item );
-
-        //hstsCahceProvider.Delete("github.com");
-
-        Console.WriteLine("\n--- Testing DNS Query Packet Builder ---");
         var dnsProvider = new DnsProvider();
-        byte[] packet = dnsProvider.BuildQueryPacket("google.com");
 
-        Console.WriteLine("\n[Program: Main] Packet Hex Dump:");
-        Console.WriteLine(BitConverter.ToString(packet));
-        Console.WriteLine($"Total Bytes: {packet.Length}");
+        // Test 1: Resolve google.com using 8.8.8.8
+        var googleIps = dnsProvider.Resolve("google.com");
+        Console.WriteLine($"\n[Program: Main] google.com resolved to: {string.Join(", ", googleIps)}");
+
+        // Test 2: Resolve cloudflare.com
+        var cfIps = dnsProvider.Resolve("cloudflare.com");
+        Console.WriteLine($"\n[Program: Main] cloudflare.com resolved to: {string.Join(", ", cfIps)}");
     }
 }
