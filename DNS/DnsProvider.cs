@@ -12,6 +12,7 @@ namespace MiniCurl.DNS
         // 1. Helper to convert the raw domain (e.g. google.com) to DNS wire fromat 06 67 6F 6F 67 6C 65 03 63 6F 6D 00)
         private byte[] EncodeDomainName(string domain)
         {
+            Console.WriteLine($"[DnsProvider: EncodeDomainName] Encoding domain '{domain}' into DNS wire-format");
             byte[] result = {};
 
             //validate the given domain
@@ -51,6 +52,7 @@ namespace MiniCurl.DNS
             if (result.Length > 255)
                 throw new ArgumentException("[DnsProvider: ConvertRawDomain] Total DNS wire-format name cannot exceed 255 bytes.");
 
+            Console.WriteLine($"[DnsProvider: EncodeDomainName] Successfully encoded domain: {result.Length} bytes");
 
             return result;
         }
@@ -65,14 +67,17 @@ namespace MiniCurl.DNS
             Random random = new Random();
 
             transactionId = (ushort)random.Next(0, 65536);
+            Console.WriteLine($"[DnsProvider: BuildHeader] Generated Transaction ID: 0x{transactionId:X4} ({transactionId})");
 
             BinaryPrimitives.WriteUInt16BigEndian(result, transactionId);
 
             //Write the DNS Flags(0x0100) at offset 2.
             BinaryPrimitives.WriteUInt16BigEndian(result.AsSpan(2), 0x0100);
+            Console.WriteLine("[DnsProvider: BuildHeader] Set Flags: 0x0100 (Standard Query, RD=1)");
 
             //Write the QDCOUNT Flag(0x0001) at offset 4.
             BinaryPrimitives.WriteUInt16BigEndian(result.AsSpan(4), 0x0001);
+            Console.WriteLine("[DnsProvider: BuildHeader] Set QDCOUNT: 1");
 
             return result;
         }
@@ -97,6 +102,7 @@ namespace MiniCurl.DNS
             BinaryPrimitives.WriteUInt16BigEndian(result.AsSpan(domain.Length), questionType);
             BinaryPrimitives.WriteUInt16BigEndian(result.AsSpan((domain.Length) + 2), questionClass);
 
+            Console.WriteLine($"[DnsProvider: BuildQuestion] Built question: {result.Length} bytes (QTYPE: 0x{questionType:X4}, QCLASS: 0x{questionClass:X4})");
 
             return result;
         }
@@ -104,6 +110,7 @@ namespace MiniCurl.DNS
         //4. build the main orchestrator 
         public byte[] BuildQueryPacket(string domain, ushort questionType = 0x0001, ushort questionClass = 0x0001)
         {
+            Console.WriteLine($"[DnsProvider: BuildQueryPacket] Building DNS query packet for '{domain}'");
             //Track the length
             int totalLegnth = 0;
 
@@ -128,6 +135,8 @@ namespace MiniCurl.DNS
 
             Array.Copy(headers, 0, bucket, 0, headers.Length);
             Array.Copy(qeustion, 0, bucket, headers.Length, qeustion.Length);
+
+            Console.WriteLine($"[DnsProvider: BuildQueryPacket] DNS query packet assembled: {bucket.Length} bytes (TxID: 0x{transactionId:X4})");
 
             return bucket;
 
