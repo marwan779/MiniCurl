@@ -145,7 +145,7 @@ namespace MiniCurl.DNS
         private (DnsHeader Header, byte[] RawResponse) SendQuery(byte[] queryPacket, ushort transactionId, string dnsServer = "8.8.8.8", int port = 53)
         {
             if (queryPacket == null || queryPacket.Length == 0)
-                throw new ArgumentNullException("[DnsProvider: ConvertRawDomain] Domain can't be null");
+                throw new ArgumentNullException(nameof(queryPacket), "[DnsProvider: SendQuery] Query packet can't be null or empty");
 
             //Setup the response buffer with max size of 512
             byte[] responseBuffer = new byte[512];
@@ -159,26 +159,34 @@ namespace MiniCurl.DNS
             var endPoint = new IPEndPoint(IPAddress.Parse(dnsServer), port);
 
             //Send the query and receive the response 
-            socket.SendTo(queryPacket, endPoint);
+            try
+            {
+                socket.SendTo(queryPacket, endPoint);
 
-            int bytesReceived = socket.Receive(responseBuffer);
+                int bytesReceived = socket.Receive(responseBuffer);
 
-            byte[] actualResponse = responseBuffer[..bytesReceived];
+                byte[] actualResponse = responseBuffer[..bytesReceived];
+                Console.WriteLine($"[DnsProvider: SendQuery] Received {bytesReceived} bytes from {dnsServer}:{port}");
 
+                // Validate the response length
+                var header = ParseDnsHeader(actualResponse);
 
-            // Validate the response length
-            var header = ParseDnsHeader(actualResponse);
+                if (header.TransactionId != transactionId)
+                    throw new InvalidDataException($"Transaction ID mismatch: sent 0x{transactionId:X4}, got 0x{header.TransactionId:X4}");
 
-            if (header.TransactionId != transactionId)
-                throw new InvalidDataException($"Transaction ID mismatch: sent 0x{transactionId:X4}, got 0x{header.TransactionId:X4}");
+                if (!header.IsResponse)
+                    throw new InvalidDataException("Received a query packet instead of a response.");
 
-            if (!header.IsResponse)
-                throw new InvalidDataException("Received a query packet instead of a response.");
+                if (header.ResponseCode != 0)
+                    throw new Exception($"DNS server replied with error code: {header.ResponseCode} (e.g. 3 = NXDOMAIN)");
 
-            if (header.ResponseCode != 0)
-                throw new Exception($"DNS server replied with error code: {header.ResponseCode} (e.g. 3 = NXDOMAIN)");
-
-            return (header, actualResponse);
+                return (header, actualResponse);
+            }
+            catch (SocketException ex)
+            {
+                Console.WriteLine($"[DnsProvider: SendQuery] Socket communication error with {dnsServer}:{port}: {ex.Message}");
+                throw;
+            }
         }
 
 
@@ -300,20 +308,28 @@ namespace MiniCurl.DNS
         {
             Console.WriteLine($"\n[DnsProvider: Resolve] Resolving domain '{domain}' using DNS server '{dnsServer}'");
 
-            // 1. Build wire-format query packet
-            byte[] queryPacket = BuildQueryPacket(domain, out ushort transactionId);
+            try
+            {
+                // 1. Build wire-format query packet
+                byte[] queryPacket = BuildQueryPacket(domain, out ushort transactionId);
 
-            // 2. Send over UDP and receive validated response
-            var (header, rawResponse) = SendQuery(queryPacket, transactionId, dnsServer, port);
+                // 2. Send over UDP and receive validated response
+                var (header, rawResponse) = SendQuery(queryPacket, transactionId, dnsServer, port);
 
-            // 3. Parse and extract IP addresses from answer section
-            var ips = ParseAnswers(rawResponse, header);
+                // 3. Parse and extract IP addresses from answer section
+                var ips = ParseAnswers(rawResponse, header);
 
-            if (ips.Count == 0)
-                throw new Exception($"[DnsProvider: Resolve] Could not resolve an IPv4 address for '{domain}'");
+                if (ips.Count == 0)
+                    throw new Exception($"[DnsProvider: Resolve] Could not resolve an IPv4 address for '{domain}'");
 
-            Console.WriteLine($"[DnsProvider: Resolve] Successfully resolved '{domain}' -> {string.Join(", ", ips)}");
-            return ips;
+                Console.WriteLine($"[DnsProvider: Resolve] Successfully resolved '{domain}' -> {string.Join(", ", ips)}");
+                return ips;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[DnsProvider: Resolve] Failed to resolve '{domain}': {ex.Message}");
+                throw;
+            }
         }
     }
 }

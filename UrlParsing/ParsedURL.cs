@@ -7,7 +7,8 @@ namespace MiniCurl.Parsing
     public class ParsedURL
     {
         public string FullURL { get; set; } = string.Empty; // https://www.google.com:443
-        public string Protocol { get; set; } = string.Empty; // HTTP/HTTPS
+        public HttpScheme Scheme { get; set; } // HTTP / HTTPS
+        public string Protocol => Scheme.ToString().ToLowerInvariant(); // HTTP/HTTPS
         public string Host { get; set; } = string.Empty; // ://www.google.com:443 (Domain name + Port)
         public string HostName { get; set; } = string.Empty; // ://www.google.com (Domain name)
         public int? Port { get; set; } // 443

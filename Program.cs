@@ -11,29 +11,49 @@ class Program
     static async Task Main(string[] args)
     {
         Console.WriteLine("\n==============================");
-        Console.WriteLine("    Testing TCP & TLS Flow    ");
+        Console.WriteLine("    Testing Refactored Pipeline    ");
         Console.WriteLine("==============================");
 
-        var dnsProvider = new DnsProvider();
+        var parser = new URLParser();
+        var hstsCache = new HstsCacheProvider();
+        var dnsResolver = new DnsProvider();
         var tcpHandler = new TcpHandler();
 
-        // 1. Resolve host
-        string host = "google.com";
-        var ips = dnsProvider.Resolve(host, "192.168.1.1");
-        var targetIp = ips.First();
+        // 1. Parse URL with HttpScheme enum
+        string url = "https://google.com";
+        var parsedUrl = parser.ParseURL(url);
 
-        // 2. Test HTTPS (Port 443 with TLS 1.3)
-        Console.WriteLine("\n--- Testing HTTPS (Port 443 + TLS) ---");
-        await using (var httpsStream = await tcpHandler.CreateConnection(targetIp, host, 443, "https"))
+        if (parsedUrl == null)
         {
-            Console.WriteLine($"[Program: Main] HTTPS Stream established! (CanRead: {httpsStream.CanRead}, CanWrite: {httpsStream.CanWrite})");
+            Console.WriteLine("[Program: Main] URL parsing failed");
+            return;
         }
 
-        // 3. Test HTTP (Port 80 Plain TCP)
-        Console.WriteLine("\n--- Testing HTTP (Port 80 Plain TCP) ---");
-        await using (var httpStream = await tcpHandler.CreateConnection(targetIp, host, 80, "http"))
+        // 2. Check HSTS Cache
+        var hstsEntry = hstsCache.Get(parsedUrl.HostName);
+        if (hstsEntry != null && !hstsEntry.IsExpired)
         {
-            Console.WriteLine($"[Program: Main] HTTP Stream established! (CanRead: {httpStream.CanRead}, CanWrite: {httpStream.CanWrite})");
+            Console.WriteLine($"[Program: Main] Upgrading scheme to HTTPS due to active HSTS policy");
+            parsedUrl.Scheme = HttpScheme.Https;
+            parsedUrl.Port = 443;
+        }
+
+        // 3. Resolve Domain to IP
+        var ips = dnsResolver.Resolve(parsedUrl.HostName, "192.168.1.1");
+        var targetIp = ips.First();
+
+        // 4. Test HTTPS connection using HttpScheme enum
+        Console.WriteLine("\n--- Testing HTTPS Connection ---");
+        await using (var httpsStream = await tcpHandler.CreateConnection(targetIp, parsedUrl.HostName, parsedUrl.Port ?? 443, parsedUrl.Scheme))
+        {
+            Console.WriteLine($"[Program: Main] Connection active: CanRead={httpsStream.CanRead}, CanWrite={httpsStream.CanWrite}");
+        }
+
+        // 5. Test Plain HTTP connection using HttpScheme enum
+        Console.WriteLine("\n--- Testing HTTP Connection ---");
+        await using (var httpStream = await tcpHandler.CreateConnection(targetIp, parsedUrl.HostName, 80, HttpScheme.Http))
+        {
+            Console.WriteLine($"[Program: Main] Connection active: CanRead={httpStream.CanRead}, CanWrite={httpStream.CanWrite}");
         }
     }
 }
