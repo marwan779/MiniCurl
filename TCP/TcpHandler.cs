@@ -9,38 +9,32 @@ using MiniCurl.Parsing;
 
 namespace MiniCurl.TCP
 {
-    public class TcpHandler
+    public static class TcpHandler
     {
-        public async Task<Stream> CreateConnection(IPAddress ipAddress, string host, int port, HttpScheme scheme)
+        public static async Task<Stream> CreateConnection(ConnectionDetails details)
         {
-            Console.WriteLine($"[TcpHandler: CreateConnection] Establishing connection to {ipAddress}:{port} ({scheme})");
+            if (details == null)
+                throw new ArgumentNullException(nameof(details));
+
+            Console.WriteLine($"[TcpHandler: CreateConnection] Establishing connection to {details.IpAddress}:{details.Port} ({details.Scheme})");
             // 1. Establish the TCP Socket
-            var tcpSocket = await CreateTcpSocket(ipAddress, port);
+            var tcpSocket = await CreateTcpSocket(details.IpAddress, details.Port);
 
             // 2. Wrap in NetworkStream
             NetworkStream networkStream = new NetworkStream(tcpSocket);
 
             // 3. If HTTPS -> return TLSHandshake(...)
 
-            if (scheme == HttpScheme.Https)
+            if (details.Scheme == HttpScheme.Https)
             {
-                return await TLSHandshake(networkStream, host);
+                return await TLSHandshake(networkStream, details.Host);
             }
 
             // 4. If HTTP  -> return networkStream
             return networkStream;
         }
 
-        public async Task<Stream> CreateConnection(IPAddress ipAddress, string host, int port, string scheme)
-        {
-            var parsedScheme = scheme.Equals("https", StringComparison.OrdinalIgnoreCase) 
-                ? HttpScheme.Https 
-                : HttpScheme.Http;
-
-            return await CreateConnection(ipAddress, host, port, parsedScheme);
-        }
-
-        private async Task<SslStream> TLSHandshake(NetworkStream networkStream, string host)
+        private static async Task<SslStream> TLSHandshake(NetworkStream networkStream, string host)
         {
             Console.WriteLine($"[TcpHandler: TLSHandshake] Initiating TLS handshake for host: '{host}'");
             var sslStream = new SslStream(
@@ -70,7 +64,7 @@ namespace MiniCurl.TCP
             }
         }
 
-        private async Task<Socket> CreateTcpSocket(IPAddress ipAddress, int port)
+        private static async Task<Socket> CreateTcpSocket(IPAddress ipAddress, int port)
         {
             Console.WriteLine($"[TcpHandler: CreateTcpSocket] Connecting TCP socket to {ipAddress}:{port}");
             Socket socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);

@@ -1,4 +1,5 @@
 ﻿using MiniCurl.Http.Models;
+using MiniCurl.TCP;
 using System;
 using System.Collections.Generic;
 using System.Net;
@@ -15,9 +16,9 @@ namespace MiniCurl.Http
 {
     public class MiniCurlHttpClient
     {
-        public Task<HttpResponse>? SendRequestAsync(HttpRequest request)
+       
+        public async Task<HttpResponse>? SendRequestAsync(HttpRequest request, ConnectionDetails connectionDetails)
         {
-            Task<HttpResponse>? httpResponse = null;
 
             //Validate the request
             if (request == null)
@@ -58,11 +59,32 @@ namespace MiniCurl.Http
 
             Console.WriteLine($"[MiniCurlHttpClient: ValidateRequest] Request validated successfully ({request.Method} {request.Uri})");
 
+            //Serialize the request
+            var serializedRequest = SerializeRequest( request );
 
+            //Esiblash the TCP connection
+            var connection = await TcpHandler.CreateConnection(connectionDetails);
 
+            //Send the request over the established TCP connection
+            await connection.WriteAsync(serializedRequest, 0, serializedRequest.Length);
 
-            return httpResponse;
+            //Flush to ensure the bytes are immediately transmitted without buffering
+            await connection.FlushAsync();
 
+            //Receive the response
+            using var responseMs = new MemoryStream();
+            byte[] buffer = new byte[4096]; // 4 KB chunk buffer
+            int bytesRead;
+            // Keep reading chunks from the network until the server closes the connection (bytesRead == 0)
+            while ((bytesRead = await connection.ReadAsync(buffer, 0, buffer.Length)) > 0)
+            {
+                responseMs.Write(buffer, 0, bytesRead);
+            }
+            byte[] fullResponseBytes = responseMs.ToArray();
+
+            var parsedResponse = ParseResponse(fullResponseBytes);
+
+            return parsedResponse;
         }
 
         // Helper to serialize the request 
