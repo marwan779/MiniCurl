@@ -110,7 +110,7 @@ namespace MiniCurl.DNS
         }
 
         //4. Build the main orchestrator 
-        public byte[] BuildQueryPacket(string domain, out ushort transactionId, ushort questionType = 0x0001, ushort questionClass = 0x0001)
+        private byte[] BuildQueryPacket(string domain, out ushort transactionId, ushort questionType = 0x0001, ushort questionClass = 0x0001)
         {
             Console.WriteLine($"[DnsProvider: BuildQueryPacket] Building DNS query packet for '{domain}'");
             //Track the length

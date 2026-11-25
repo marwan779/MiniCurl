@@ -17,7 +17,7 @@ namespace MiniCurl.Http
     public class MiniCurlHttpClient
     {
        
-        public async Task<HttpResponse>? SendRequestAsync(HttpRequest request, ConnectionDetails connectionDetails)
+        public async Task<HttpResponse> SendRequestAsync(HttpRequest request, ConnectionDetails connectionDetails)
         {
 
             //Validate the request

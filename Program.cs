@@ -1,11 +1,7 @@
-﻿using MiniCurl.DNS;
-using MiniCurl.Http;
-using MiniCurl.Http.Models;
-using MiniCurl.Parsing;
-using MiniCurl.TCP;
+﻿using MiniCurl;
 using System;
-using System.Linq;
-using System.Net;
+using System.Collections.Generic;
+using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -14,58 +10,50 @@ class Program
     static async Task Main(string[] args)
     {
         Console.WriteLine("\n=================================");
-        Console.WriteLine("    Testing MiniCurlHttpClient   ");
+        Console.WriteLine("    Testing MiniCurlClient       ");
         Console.WriteLine("=================================");
 
-        // 1. Choose a safe test URL
-        string testUrl = "https://httpbin.org/get";
-        // Or: "http://example.com/" for plain HTTP
+        var client = new MiniCurlClient();
 
-        var uri = new Uri(testUrl);
+        // Test 1: GET request to https://httpbin.org/get
+        Console.WriteLine("\n>>> 1. Testing GET Request <<<");
+        var getResponse = await client.SendAsync("https://httpbin.org/get");
 
-        // 2. Resolve target IP via your custom DnsProvider
-        var dnsResolver = new DnsProvider();
-        var ips = dnsResolver.Resolve(uri.Host, "192.168.1.1");
-        var targetIp = ips.First();
+        Console.WriteLine("\n=================================");
+        Console.WriteLine($"GET Status: {getResponse.StatusCode} {getResponse.ReasonPhrase}");
+        Console.WriteLine("=================================");
+        Console.WriteLine(Encoding.UTF8.GetString(getResponse.Body ?? Array.Empty<byte>()));
 
-        // 3. Prepare ConnectionDetails
-        var connectionDetails = new ConnectionDetails(
-            targetIp,
-            uri.Host,
-            uri.Port,
-            uri.Scheme == "https" ? HttpScheme.Https : HttpScheme.Http
-        );
+        // Test 2: Safe POST request to https://httpbin.org/post with JSON payload
+        Console.WriteLine("\n>>> 2. Testing POST Request with JSON Payload <<<");
+        string jsonPayload = "{\"project\": \"MiniCurl\", \"author\": \"You\", \"feature\": \"Raw Socket HTTP Client\"}";
+        byte[] postBody = Encoding.UTF8.GetBytes(jsonPayload);
 
-        // 4. Construct your HttpRequest
-        var request = new HttpRequest
+        var postHeaders = new Dictionary<string, string>
         {
-            Method = HttpMethod.Get,
-            Uri = uri,
-            Version = HttpVersion.Version11
+            { "Content-Type", "application/json" },
+            { "User-Agent", "MiniCurl/1.0" }
         };
 
-        // Custom headers (optional)
-        request.Headers["User-Agent"] = "MiniCurl/1.0";
-        request.Headers["Accept"] = "application/json";
+        var postResponse = await client.SendAsync(
+            "https://httpbin.org/post",
+            HttpMethod.Post,
+            postHeaders,
+            postBody
+        );
 
-        // 5. Send request and receive response!
-        var client = new MiniCurlHttpClient();
-        var response = await client.SendRequestAsync(request, connectionDetails);
-
-        // 6. Inspect the parsed response
         Console.WriteLine("\n=================================");
-        Console.WriteLine($"Status: {response.StatusCode} {response.ReasonPhrase}");
-        Console.WriteLine($"Version: HTTP/{response.Version.Major}.{response.Version.Minor}");
+        Console.WriteLine($"POST Status: {postResponse.StatusCode} {postResponse.ReasonPhrase}");
         Console.WriteLine("=================================");
 
         Console.WriteLine("\n--- Response Headers ---");
-        foreach (var header in response.Headers)
+        foreach (var header in postResponse.Headers)
         {
             Console.WriteLine($"  {header.Key}: {header.Value}");
         }
 
-        Console.WriteLine("\n--- Response Body ---");
-        string bodyText = Encoding.UTF8.GetString(response.Body ?? Array.Empty<byte>());
-        Console.WriteLine(bodyText);
+        Console.WriteLine("\n--- Echoed Response Body ---");
+        string postResponseBody = Encoding.UTF8.GetString(postResponse.Body ?? Array.Empty<byte>());
+        Console.WriteLine(postResponseBody);
     }
 }
